@@ -96,7 +96,7 @@ To allow networking to be set up during container creation, Docker API calls nee
 
 On both hosts run
 ```
-export DOCKER_HOST=localhost:2377
+export DOCKER_HOST=127.0.0.1:2377
 ```
 
 (Note - this export will only persist for your current SSH session)
@@ -105,7 +105,7 @@ Containers can now be started using normal docker commands, but an IP address ne
 
 You need to connect directly to docker to attach to containers. This can be done like this
 ```
-DOCKER_HOST=localhost:2375 docker attach node1
+DOCKER_HOST=127.0.0.1:2375 docker attach node1
 ```
 
 Hit enter a few times to get a prompt. To get back out of the container and leave it running, remember to use `Ctrl-P,Q` rather than `exit`.
