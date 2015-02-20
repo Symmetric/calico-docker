@@ -64,9 +64,6 @@ class AdapterResource(resource.Resource):
         # Init a Docker client, to save having to do so every time a request comes in.
         self.docker = Client(base_url='unix://var/run/docker.sock')
 
-        # Init an etcd client.
-        self.etcd = calico_etcd.CalicoEtcdClient()
-
     def render_POST(self, request):
         """
         Handle a pre-hook.
@@ -88,8 +85,7 @@ class AdapterResource(resource.Resource):
         try:
             client_request = request_content["ClientRequest"]
 
-            # Only one action at this point, so just plumb directly
-            _client_request_net_none(client_request)
+            # _client_request_net_none(client_request)
         except BaseException:
             _log.exception('Unexpected error handling pre-hook.')
         finally:
@@ -184,21 +180,20 @@ class AdapterResource(resource.Resource):
         Insert the IP for this container into the dict.
         """
         _log.debug('Getting container config from etcd')
-        address = self.etcd.get_container_address(
-            hostname=hostname,
-            container_id=container_id)
+        address = '1.2.3.4'
+        # address = self.etcd.get_container_address(
+        #     hostname=hostname,
+        #     container_id=container_id)
         _log.debug('Got config: %s', address)
         _log.debug('Pre-load body:\n%s', server_response["Body"])
         _log.debug('body is unicode? %s', isinstance(server_response['Body'], unicode))
+
         body = json.loads(server_response["Body"])
-        network = body['NetworkSettings']
-        network['IPAddress'] = address
-        _log.debug('Modified network:\n%s', network)
+        body['NetworkSettings']['IPAddress'] = address
         server_response['Body'] = json.dumps(body, separators=(',', ':'), ensure_ascii=False)
+
         _log.debug('Post-load body:\n%s', server_response["Body"])
         _log.debug('body is unicode? %s', isinstance(server_response['Body'], unicode))
-        # server_response['Body'] = json.dumps({"AAA": "BBB"})
-        # _log.debug('Outgoing server_response:\n\n%s', json.dumps(body, indent=2))
 
 
 def _client_request_net_none(client_request):
