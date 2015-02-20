@@ -1,7 +1,7 @@
 # Copyright (c) 2015 Metaswitch Networks
 # All Rights Reserved.
 #
-#    Licensed under the Apache License, Version 2.0 (the "License"); you may
+# Licensed under the Apache License, Version 2.0 (the "License"); you may
 #    not use this file except in compliance with the License. You may obtain
 #    a copy of the License at
 #
@@ -12,6 +12,7 @@
 #    WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the
 #    License for the specific language governing permissions and limitations
 #    under the License.
+import copy
 
 from twisted.internet import reactor
 from twisted.web import server, resource
@@ -80,47 +81,75 @@ class AdapterResource(resource.Resource):
                             (request_content["Type"],))
 
     def _handle_pre_hook(self, request, request_content):
+        # Make sure we always have something to return.
+        client_request = {}
+        # noinspection PyBroadException
+        # Exceptions hang the Reactor, so pokemon-catch them all here.
+        try:
+            client_request = request_content["ClientRequest"]
 
-        client_request = request_content["ClientRequest"]
-
-        # Only one action at this point, so just plumb directly
-        _client_request_net_none(client_request)
-
-        return json.dumps({"PowerstripProtocolVersion": 1,
-                           "ModifiedClientRequest": client_request})
+            # Only one action at this point, so just plumb directly
+            _client_request_net_none(client_request)
+        except BaseException:
+            _log.exception('Unexpected error handling pre-hook.')
+        finally:
+            return json.dumps({"PowerstripProtocolVersion": 1,
+                               "ModifiedClientRequest": client_request})
 
     def _handle_post_hook(self, request, request_content):
-        _log.debug("Post-hook response: %s", request_content)
+        # Make sure we always have something to return
+        # noinspection PyBroadException
+        # Exceptions hang the Reactor, so pokemon-catch them all here.
+        try:
+            _log.debug("Post-hook response: %s", request_content)
+            # Extract ip, group, master, docker_options
+            client_request = request_content["ClientRequest"]
+            server_response = copy.deepcopy(request_content["ServerResponse"])
+            request_uri = client_request['Request']
+            request_path = request_uri.split('/')
 
-        # Extract ip, group, master, docker_options
-        client_request = request_content["ClientRequest"]
-        server_response = request_content["ServerResponse"]
+            if len(request_path) == 5 and request_path[2] == u'containers':
+                container_id = request_path[3]
+                if request_path[4] == u'start':
+                    # /version/containers/id/start
+                    _log.debug('Intercepted container start request')
+                    self._install_endpoint(container_id)
+                elif request_path[4] == 'json':
+                    # /version/containers/*/json
+                    _log.debug('Intercepted container json request')
+                    self._update_container_info(container_id, server_response)
+                else:
+                    _log.debug('Unrecognized path: %s', request_path)
+            else:
+                _log.debug('Unrecognized path of length %d: %s', len(request_path), request_path)
+        except BaseException:
+            _log.exception('Unexpected error handling post-hook.')
+        finally:
+            try:
+                output = json.dumps({"PowerstripProtocolVersion": 1,
+                                     "ModifiedServerResponse": server_response})
+                _log.debug('Returning output:\n%s',
+                           json.dumps({"PowerstripProtocolVersion": 1,
+                                       "ModifiedServerResponse": server_response}, indent=2))
+            except:
+                _log.exception('Error in finally')
+            return output
 
-        # Only one action at this point, so just plumb directly.
-        self._install_endpoint(client_request)
-
-        return json.dumps({"PowerstripProtocolVersion": 1,
-                           "ModifiedServerResponse": server_response})
-
-    def _install_endpoint(self, client_request):
+    def _install_endpoint(self, container_id):
         """
         Install a Calico endpoint (veth) in the container referenced in the client request object.
-        :param client_request: Powerstrip ClientRequest object as dictionary from JSON.
+        :param container_id: The UUID of the container to install an endpoint in.
         :returns: None
         """
 
         try:
-            uri = client_request["Request"]
-            _log.info("Intercepted %s, starting network.", uri)
-
             # Get the container ID
             # TODO better URI parsing
             # /*/containers/*/start
-            (_, version, _, cid, _) = uri.split("/", 4)
-            _log.debug("cid %s", cid)
+            _log.debug("cid %s", container_id)
 
             # Grab the running pid from Docker
-            cont = self.docker.inspect_container(cid)
+            cont = self.docker.inspect_container(container_id)
             _log.debug("Container info: %s", cont)
             pid = cont["State"]["Pid"]
             _log.debug(pid)
@@ -135,14 +164,41 @@ class AdapterResource(resource.Resource):
 
             endpoint = netns.set_up_endpoint(ip=ip, cpid=pid)
             self.etcd.create_container(hostname=hostname,
-                                       container_id=cid,
+                                       container_id=container_id,
                                        endpoint=endpoint)
-            _log.info("Finished network for container %s, IP=%s", cid, ip)
+            _log.info("Finished network for container %s, IP=%s", container_id, ip)
 
         except KeyError as e:
-            _log.warning("Key error %s, request: %s", e, client_request)
+            _log.warning("Key error %s, container_id: %s", e, container_id)
 
         return
+
+    def _update_container_info(self, container_id, server_response):
+        """
+        Update the response for a */container/*/json (docker inspect) request.
+
+        Since we've patched the docker networking using --net=none,
+        docker inspect calls will not return any IP information. This is required
+        for some orchestrators (such as Kubernetes).
+
+        Insert the IP for this container into the dict.
+        """
+        _log.debug('Getting container config from etcd')
+        address = self.etcd.get_container_address(
+            hostname=hostname,
+            container_id=container_id)
+        _log.debug('Got config: %s', address)
+        _log.debug('Pre-load body:\n%s', server_response["Body"])
+        _log.debug('body is unicode? %s', isinstance(server_response['Body'], unicode))
+        body = json.loads(server_response["Body"])
+        network = body['NetworkSettings']
+        network['IPAddress'] = address
+        _log.debug('Modified network:\n%s', network)
+        server_response['Body'] = json.dumps(body, separators=(',', ':'), ensure_ascii=False)
+        _log.debug('Post-load body:\n%s', server_response["Body"])
+        _log.debug('body is unicode? %s', isinstance(server_response['Body'], unicode))
+        # server_response['Body'] = json.dumps({"AAA": "BBB"})
+        # _log.debug('Outgoing server_response:\n\n%s', json.dumps(body, indent=2))
 
 
 def _client_request_net_none(client_request):

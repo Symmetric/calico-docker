@@ -90,3 +90,63 @@ class CalicoEtcdClient(object):
             _log.exception("Hit Exception %s writing to etcd.", e)
             pass
 
+    def get_container(self, hostname, container_id):
+        """
+        Get config for a container in the /calico/ namespace.  This function assumes 1 container,
+        with 1 endpoint.
+
+        :param hostname: The hostname for the Docker hosting this container.
+        :param container_id: The Docker container ID.
+        :param endpoint: The Endpoint to add to the container.
+        :return: dict: A dictionary containing the container's config.
+        """
+        container_path = CONTAINER_PATH % {"hostname": hostname,
+                                           "container_id": container_id}
+
+        _log.info("Getting container config at %s", container_path)
+        try:
+            return self.client.get(container_path)
+        except etcd.EtcdException as e:
+            _log.exception("Hit Exception %s reading from etcd.", e)
+            return None
+
+    def get_container_address(self, hostname, container_id):
+        """
+        Get config for a container in the /calico/ namespace.  This function assumes 1 container,
+        with 1 endpoint.
+
+        :param hostname: The hostname for the Docker hosting this container.
+        :param container_id: The Docker container ID.
+        :return: dict: A dictionary containing the container's config.
+        """
+        return '1.2.3.4'
+        # endpoints_path = (CONTAINER_PATH + 'endpoint/') % {"hostname": hostname,
+        #                                                    "container_id": container_id}
+        #
+        # _log.info("Getting endpoint config at %s", endpoints_path)
+        # try:
+        #     # Note -- this library behaviour appears to be bugged.
+        #     # .children returns the leaf nodes not the child nodes.
+        #     # Ok for our purposes here though.
+        #     endpoints_list = self.client.read(endpoints_path, recursive=True)
+        #
+        #     # Walk the nodes under /endpoint/*/, and look for the /endpoint/*/addrs key.
+        #     for node in endpoints_list.children:
+        #         _log.debug('Inspecting etcd node "node"')
+        #         if node.key.endswith('/addrs'):
+        #             address_str = node.value
+        #             _log.debug('Found address: %s', address_str)
+        #             break
+        #     else:
+        #         _log.warn('No address found for container %s', container_id)
+        #         return
+        #
+        #     # Currently stashing a hokey JSON list in the 'addrs' etcd value.
+        #     addrs = json.loads(address_str)
+        #     # Just pull out the first address.
+        #     address = addrs[0]['addr']
+        #     _log.debug('Extracted address %s', address)
+        #     return address
+        # except etcd.EtcdException as e:
+        #     _log.exception("Hit Exception %s reading from etcd.", e)
+        #     pass

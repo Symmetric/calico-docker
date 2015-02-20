@@ -60,6 +60,7 @@ def remove_endpoint(ep_id):
     iface = "tap" + ep_id[:11]
     call("ip link delete %s" % iface, shell=True)
 
+
 def set_up_endpoint(ip, cpid, in_container=False, veth_name=VETH_NAME, proc_alias=PROC_ALIAS):
     """
     Set up an endpoint (veth) in the network namespace idenfitied by the PID.
@@ -80,61 +81,98 @@ def set_up_endpoint(ip, cpid, in_container=False, veth_name=VETH_NAME, proc_alia
     iface = "tap" + ep_id[:11]
     iface_tmp = "tmp" + ep_id[:11]
 
-    # Provision the networking
-    check_call("mkdir -p /var/run/netns", shell=True)
-    check_call("ln -s /%s/%s/ns/net /var/run/netns/%s" % (proc_alias, cpid, cpid), shell=True)
+    try:
+        # Provision the networking
+        check_call("mkdir -p /var/run/netns", shell=True)
+        check_call("ln -s /%s/%s/ns/net /var/run/netns/%s" % (proc_alias, cpid, cpid), shell=True)
 
-    # If running in a container, set up a link to the root netns.
-    if in_container:
+        # If running in a container, set up a link to the root netns.
+        if in_container:
+            _log.debug('In container, attempting to link to root netns')
+            try:
+                check_call("ln -s /%s/%s/ns/net /var/run/netns/%s" % (proc_alias,
+                                                                      ROOT_NETNS,
+                                                                      ROOT_NETNS),
+                           shell=True)
+            except CalledProcessError:
+                pass  # Only need to do this once.
+        _log.debug('Contents of /var/run/netns:\n%s', check_output("ls -l /var/run/netns",
+                                                                   shell=True))
+
+        # Create the veth pair and move one end into container:
+        check_call("ip link add %s type veth peer name %s" % (iface, iface_tmp), shell=True)
+        check_call("ip link set %s up" % iface, shell=True)
+        check_call("ip link set %s netns %s" % (iface_tmp, cpid), shell=True)
+        _log.debug('Netns %d "ip link" output:\n%s',
+                   cpid, check_output("ip netns exec %s ip link" % cpid,
+                                      shell=True))
+
+        # Rename within the container to something sensible.
+        check_call("ip netns exec %s ip link set dev %s name %s" % (cpid,
+                                                                    iface_tmp,
+                                                                    veth_name),
+                   shell=True)
+        check_call("ip netns exec %s ip link set %s up" % (cpid, veth_name), shell=True)
+
+        # If in container, the iface end of the veth pair will be in the container namespace.
+        # We need to move it to the root namespace so it will participate in routing.
+        if in_container:
+            # Move the other end of the veth pair into the root namespace
+            check_call("ip link set %s netns %s" % (iface, ROOT_NETNS), shell=True)
+            check_call("ip netns exec %s ip link set %s up" % (ROOT_NETNS, iface), shell=True)
+
+        # Set the IP address
+        check_call("ip netns exec %s ip addr add %s/32 dev %s" % (cpid, ip, veth_name), shell=True)
+
+        # Set the default route.
+        # Is there already a default route?  This occurs if there is already networking set up on
+        # the container.  We want Calico to be the default route.
+        routes = check_output(['ip', 'netns', 'exec', str(cpid), 'ip', 'route'])
+        _log.debug('Netns %d "ip route" output:\n%s', cpid, routes)
+        if 'default' in routes:
+            # Delete the default.
+            _log.info('Found default route in output, deleting.')
+            _log.debug('"ip route" output:\n%s', routes)
+            check_call("ip netns exec %s ip route del default" % cpid, shell=True)
+
+        check_call("ip netns exec %s ip route add default dev %s" % (cpid, veth_name), shell=True)
+
+        # Get the MAC address.
+        mac = check_output("ip netns exec %s ip link show %s | grep ether | awk '{print $2}'" %
+                           (cpid, veth_name), shell=True).strip()
+
+        # Return an Endpoint
+        return Endpoint(id=ep_id, addrs=[{"addr":str(ip)}], state="enabled", mac=mac)
+    except CalledProcessError as e:
+        _log.exception('Command "%(cmd)s" failed with error code %(rc)d. Output: "%(output)s"',
+                       {
+                           'cmd': e.cmd,
+                           'rc': e.returncode,
+                           'output': e.message
+                       })
+        # noinspection PyBroadException
+        # We're in the error path, so definitly don't want to terminate on exceptions.
         try:
-            check_call("ln -s /%s/%s/ns/net /var/run/netns/%s" % (proc_alias,
-                                                                  ROOT_NETNS,
-                                                                  ROOT_NETNS),
-                       shell=True)
-        except CalledProcessError:
-            pass  # Only need to do this once.
-    _log.debug(check_output("ls -l /var/run/netns", shell=True))
+            _log_interfaces(cpid)
+        except BaseException:
+            _log.exception('Error logging interfaces')
+        raise NetnsException('Failed to set up endpoint')
 
-    # Create the veth pair and move one end into container:
-    check_call("ip link add %s type veth peer name %s" % (iface, iface_tmp), shell=True)
-    check_call("ip link set %s up" % iface, shell=True)
-    check_call("ip link set %s netns %s" % (iface_tmp, cpid), shell=True)
-    _log.debug(check_output("ip netns exec %s ip link" % cpid, shell=True))
 
-    # Rename within the container to something sensible.
-    check_call("ip netns exec %s ip link set dev %s name %s" % (cpid,
-                                                                iface_tmp,
-                                                                veth_name),
-               shell=True)
-    check_call("ip netns exec %s ip link set %s up" % (cpid, veth_name), shell=True)
+def _log_interfaces(namespace):
+    """
+    Log interface state to assist validation of provisioning process.
+    """
+    if _log.isEnabledFor(logging.DEBUG):
+        interfaces = check_output(['ip', 'addr'])
+        _log.debug("Interfaces:\n%s", interfaces)
+        namespaces = check_output(['ip', 'netns', 'list'])
+        _log.debug("Namespaces:\n%s", namespaces)
+        ifce_namespaces = check_output(['ip', 'netns', 'exec', str(namespace), 'ip', 'addr'])
+        _log.debug("Interfaces in namespace %s:\n%s", namespace, ifce_namespaces)
+        ifce_namespaces = check_output(['ip', 'netns', 'exec', str(namespace), 'ip', 'route'])
+        _log.debug("Routes in namespace %s:\n%s", namespace, ifce_namespaces)
 
-    # If in container, the iface end of the veth pair will be in the container namespace.  We need
-    # to move it to the root namespace so it will participate in routing.
-    if in_container:
-        # Move the other end of the veth pair into the root namespace
-        check_call("ip link set %s netns %s" % (iface, ROOT_NETNS), shell=True)
-        check_call("ip netns exec %s ip link set %s up" % (ROOT_NETNS, iface), shell=True)
 
-    # Set the IP address
-    check_call("ip netns exec %s ip addr add %s/32 dev %s" % (cpid, ip, veth_name), shell=True)
-
-    # Set the default route.
-    # Is there already a default route?  This occurs if there is already networking set up on
-    # the container.  We want Calico to be the default route.
-    routes = check_output(['ip', 'netns', 'exec', str(cpid), 'ip', 'route'])
-    _log.debug('Netns %d "ip route" output:\n%s', cpid, routes)
-    if 'default' in routes:
-        # Delete the default.
-        _log.info('Found default route in output, deleting.')
-        _log.debug('"ip route" output:\n%s', routes)
-        check_call("ip netns exec %s ip route del default" % cpid, shell=True)
-
-    check_call("ip netns exec %s ip route add default dev %s" % (cpid, veth_name), shell=True)
-
-    # Get the MAC address.
-    mac = check_output("ip netns exec %s ip link show %s | grep ether | awk '{print $2}'" %
-                       (cpid, veth_name), shell=True).strip()
-
-    # Return an Endpoint
-    return Endpoint(id=ep_id, addrs=[{"addr":str(ip)}], state="enabled", mac=mac)
-
+class NetnsException(Exception):
+    pass
