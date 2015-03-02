@@ -28,7 +28,8 @@ RUN apt-get update && \
         python-docopt \
         python-pip \
         python-pyasn1 \
-        python-zmq && \
+        python-zmq \
+        git && \
     apt-get clean && \
     rm -rf /var/lib/apt/lists/* /tmp/* /var/tmp/*
 
@@ -45,12 +46,9 @@ RUN apt-get update && \
     rm -rf /var/lib/apt/lists/* /tmp/* /var/tmp/*
 
 # Powerstrip
-RUN curl -L https://github.com/ClusterHQ/powerstrip/archive/v0.0.1.tar.gz \
-            -o powerstrip.tar.gz && \
-    tar -xzf powerstrip.tar.gz && \
-    rm powerstrip.tar.gz && \
-    mv powerstrip-0.0.1 powerstrip && \
+RUN git clone https://github.com/Symmetric/powerstrip.git && \
     cd powerstrip && \
+    git checkout fix-content-length && \
     sed -i s/2375/2377/ powerstrip.tac && \
     python setup.py install
 
