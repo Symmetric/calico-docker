@@ -12,6 +12,7 @@
 #    WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the
 #    License for the specific language governing permissions and limitations
 #    under the License.
+import re
 
 from twisted.internet import reactor
 from twisted.web import server, resource
@@ -104,16 +105,27 @@ class AdapterResource(resource.Resource):
             client_request = request_content["ClientRequest"]
             server_response = request_content["ServerResponse"]
             request_uri = client_request['Request']
-            request_path = request_uri.split('/')
+            # Strip left-most '/' (if present) to avoid always having an empty
+            # request_path[0].
+            request_path = request_uri.lstrip('/').split('/')
 
-            if len(request_path) == 5 and request_path[2] == u'containers':
-                container_id = request_path[3]
-                if request_path[4] == u'start':
-                    # /version/containers/id/start
+            if re.match('v[.\d]+', request_path[0]):
+                # Got an explicitly versioned path, so remove the version so
+                # that it looks the same as an unversioned path, e.g.
+                # /v1.16/containers/json => /containers/json
+                request_path.pop(0)
+
+            if (len(request_path) == 3 and
+                    request_path[0] == u'containers'):
+                # Got /containers/*/*
+                container_id = request_path[1]
+
+                if request_path[2] == u'start':
+                    # Got /containers/id/start
                     _log.debug('Intercepted container start request')
                     self._install_endpoint(container_id)
-                elif request_path[4] == 'json':
-                    # /version/containers/*/json
+                elif request_path[2] == 'json':
+                    # Got /containers/*/json
                     _log.debug('Intercepted container json request')
                     self._update_container_info(container_id, server_response)
                 else:
