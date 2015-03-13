@@ -86,12 +86,21 @@ class AdapterResource(resource.Resource):
         # noinspection PyBroadException
         # Exceptions hang the Reactor, so pokemon-catch them all here.
         try:
+            _log.debug("Pre-hook request: %s", request_content)
             client_request = request_content["ClientRequest"]
 
             _client_request_net_none(client_request)
         except BaseException:
             _log.exception('Unexpected error handling pre-hook.')
         finally:
+            _log.debug(
+                'Returning output:\n%s',
+                json.dumps(
+                    {
+                        "PowerstripProtocolVersion": 1,
+                        "ModifiedClientRequest": client_request
+                    },
+                    indent=2))
             return json.dumps({"PowerstripProtocolVersion": 1,
                                "ModifiedClientRequest": client_request})
 
@@ -172,7 +181,7 @@ class AdapterResource(resource.Resource):
             cont = self.docker.inspect_container(container_id)
             _log.debug("Container info: %s", cont)
             pid = cont["State"]["Pid"]
-            _log.debug(pid)
+            _log.debug('pid=%s', pid)
 
             # Attempt to parse out environment variables
             env_list = cont["Config"]["Env"]
@@ -184,7 +193,9 @@ class AdapterResource(resource.Resource):
 
             endpoint = netns.set_up_endpoint(ip=ip, cpid=pid)
             if not endpoint:
-                raise CalicoException('Failed to create container in etcd.')
+                raise CalicoException('Failed to create container in etcd. '
+                                      'IP=%s, container_id=%s',
+                                      ip, container_id)
 
             self.etcd.create_container(hostname=hostname,
                                        container_id=container_id,
@@ -244,7 +255,11 @@ def _client_request_net_none(client_request):
         # Body is passed as a string, so deserialize it to JSON.
         body = json.loads(client_request["Body"])
 
-        host_config = body["HostConfig"]
+        try:
+            host_config = body["HostConfig"]
+        except KeyError:
+            # Request body didn't contain a HostConfig; insert one.
+            host_config = body["HostConfig"] = {}
         _log.debug("Original NetworkMode: %s",
                    host_config.get("NetworkMode", "<unset>"))
         host_config["NetworkMode"] = "none"
