@@ -140,18 +140,31 @@ def set_up_endpoint(ip, cpid, in_container=False, veth_name=VETH_NAME, proc_alia
         check_call("ip netns exec %s ip route add default dev %s" % (cpid, veth_name), shell=True)
 
         # Get the MAC address.
-        mac = check_output("ip netns exec %s ip link show %s | grep ether | awk '{print $2}'" %
+        mac = check_output("ip netns exec %s ip link show %s | "
+                           "grep ether | awk '{print $2}'" %
                            (cpid, veth_name), shell=True).strip()
     except CalledProcessError as e:
         _log.exception(
-            'Error running command "%(cmd)s". Got return code: %(rc)s, output: "%(output)s"',
+            'Error running command "%(cmd)s". '
+            'Got return code: %(rc)s, output: "%(output)s"',
             {
                 'cmd': e.cmd,
                 'rc': e.returncode,
                 'output': e.output,
             })
-        return None
+        raise CalicoNetnsException('Failed to create container in etcd. '
+                                   'IP=%s, PID=%s',
+                                   ip, cpid)
 
     # Return an Endpoint
-    return Endpoint(id=ep_id, addrs=[{"addr":str(ip)}], state="enabled", mac=mac)
+    endpoint = Endpoint(
+        id=ep_id,
+        addrs=[{"addr" : str(ip)}],
+        state="enabled",
+        mac=mac,
+    )
+    _log.debug('Created endpoint %s', endpoint)
+    return endpoint
 
+class CalicoNetnsException(Exception):
+    pass

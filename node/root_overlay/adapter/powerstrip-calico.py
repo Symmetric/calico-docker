@@ -1,7 +1,7 @@
 # Copyright (c) 2015 Metaswitch Networks
 # All Rights Reserved.
 #
-#    Licensed under the Apache License, Version 2.0 (the "License"); you may
+# Licensed under the Apache License, Version 2.0 (the "License"); you may
 #    not use this file except in compliance with the License. You may obtain
 #    a copy of the License at
 #
@@ -37,8 +37,9 @@ LISTEN_PORT = 2378
 
 def setup_logging(logfile):
     _log.setLevel(logging.DEBUG)
-    formatter = logging.Formatter('%(asctime)s [%(levelname)s] %(filename)s.%(name)s %(lineno)d: '
-                                  '%(message)s')
+    formatter = logging.Formatter(
+        '%(asctime)s [%(levelname)s] %(filename)s.%(name)s %(lineno)d: '
+        '%(message)s')
     handler = logging.StreamHandler(sys.stdout)
     handler.setLevel(logging.INFO)
     handler.setFormatter(formatter)
@@ -125,7 +126,7 @@ class AdapterResource(resource.Resource):
                 request_path.pop(0)
 
             if (len(request_path) == 3 and
-                    request_path[0] == u'containers'):
+                        request_path[0] == u'containers'):
                 # Got /containers/*/*
                 container_id = request_path[1]
 
@@ -133,7 +134,7 @@ class AdapterResource(resource.Resource):
                     # Got /containers/id/start
                     _log.debug('Intercepted container start request')
                     self._install_endpoint(container_id)
-                elif request_path[2] == 'json':
+                elif request_path[2] == u'json':
                     # Got /containers/*/json
                     _log.debug('Intercepted container json request')
                     self._update_container_info(container_id, server_response)
@@ -150,14 +151,7 @@ class AdapterResource(resource.Resource):
                     "PowerstripProtocolVersion": 1,
                     "ModifiedServerResponse": server_response
                 })
-                _log.debug(
-                    'Returning output:\n%s',
-                    json.dumps(
-                        {
-                            "PowerstripProtocolVersion": 1,
-                            "ModifiedServerResponse": server_response
-                        },
-                        indent=2))
+                _log.debug('Returning output:\n%s', output)
             except:
                 _log.exception('Error in finally')
             return output
@@ -187,15 +181,12 @@ class AdapterResource(resource.Resource):
             env_list = cont["Config"]["Env"]
             env_dict = env_to_dictionary(env_list)
             ip = env_dict[ENV_IP]
+            _log.debug('Installing IP %s for container with PID %s', ip, pid)
 
             # TODO: process groups
             group = env_dict.get(ENV_GROUP, None)
 
             endpoint = netns.set_up_endpoint(ip=ip, cpid=pid)
-            if not endpoint:
-                raise CalicoException('Failed to create container in etcd. '
-                                      'IP=%s, container_id=%s',
-                                      ip, container_id)
 
             self.etcd.create_container(hostname=hostname,
                                        container_id=container_id,
@@ -259,13 +250,36 @@ def _client_request_net_none(client_request):
             host_config = body["HostConfig"]
         except KeyError:
             # Request body didn't contain a HostConfig; insert one.
-            host_config = body["HostConfig"] = {}
+            host_config = body["HostConfig"] = {
+                "HostConfig": {
+                    "Binds": None,
+                    "ContainerIDFile": "",
+                    "LxcConf": [],
+                    "Privileged": False,
+                    "PortBindings": {},
+                    "Links": None,
+                    "PublishAllPorts": False,
+                    "Dns": None,
+                    "DnsSearch": None,
+                    "ExtraHosts": None,
+                    "VolumesFrom": None,
+                    "Devices": [],
+                    "NetworkMode": "none",
+                    "IpcMode": "",
+                    "CapAdd": None,
+                    "CapDrop": None,
+                    "RestartPolicy": {"Name": "", "MaximumRetryCount": 0},
+                    "SecurityOpt": None,
+                }
+            }
         _log.debug("Original NetworkMode: %s",
                    host_config.get("NetworkMode", "<unset>"))
         host_config["NetworkMode"] = "none"
+        _log.debug('New HostConfig: %s', host_config)
 
         # Re-serialize the updated body.
         client_request["Body"] = json.dumps(body)
+        _log.debug('New client_request: %s', client_request)
     except KeyError as e:
         _log.warning("Error setting net=none: %s, request was %s",
                      e, client_request)
