@@ -16,6 +16,7 @@
 etcd operations for the /calico namespace.  Provides high level functions for adding and removing
 workloads on a node.
 """
+import socket
 import etcd
 from collections import namedtuple
 import json
@@ -33,6 +34,11 @@ HOST_PATH = "/calico/host/%(hostname)s/"
 CONTAINER_PATH = "/calico/host/%(hostname)s/workload/docker/%(container_id)s/"
 ENDPOINT_PATH = "/calico/host/%(hostname)s/workload/docker/%(container_id)s/" + \
                 "endpoint/%(endpoint_id)s/"
+GROUPS_PATH = "/calico/network/group/"
+GROUP_MEMBER_PATH = "/calico/network/group/%(group_id)s/member"
+ENDPOINTS_PATH = "/calico/host/%(hostname)s/workload/docker/%(container_id)s/endpoint/"
+
+hostname = socket.gethostname()
 
 ENV_ETCD = "ETCD_AUTHORITY"
 """The environment variable that locates etcd service."""
@@ -69,8 +75,8 @@ class CalicoEtcdClient(object):
 
     def create_container(self, hostname, container_id, endpoint):
         """
-        Set up a container in the /calico/ namespace.  This function assumes 1 container, with 1
-        endpoint.
+        Set up a container in the /calico/ namespace.  This function assumes 1
+        container, with 1 endpoint.
 
         :param hostname: The hostname for the Docker hosting this container.
         :param container_id: The Docker container ID.
@@ -119,3 +125,69 @@ class CalicoEtcdClient(object):
 
         _log.info(next_hops)
         return next_hops
+
+    def add_container_to_group(self, container_id, group_name):
+        group_id = self.get_group_id(group_name)
+        ep_id = self.get_ep_id_from_cont(container_id)
+        group_path = GROUP_MEMBER_PATH % {"group_id": group_id}
+        _log.info("Adding endpoint %s to group %s", ep_id, group_path)
+
+        try:
+            self.client.write(group_path + ep_id, "")
+        except etcd.EtcdException as e:
+            _log.exception("Hit Exception %s writing to etcd.", e)
+            pass
+
+    # TODO: We should import this directly from datastore.py
+    # We can do that once we do away with the master Docker container.
+    def get_group_id(self, name_to_find):
+        """
+        Get the UUID of the named group.  If multiple groups have the same name, the first matching
+        one will be returned.
+        :param name_to_find:
+        :return: string UUID for the group, or None if the name was not found.
+        """
+        for group_id, name in self.get_groups().iteritems():
+            if name_to_find == name:
+                return group_id
+        return None
+
+    def get_groups(self):
+        """
+        Get the all configured groups.
+        :return: a dict of group_id => name
+        """
+        groups = {}
+        try:
+            etcd_groups = self.client.read(GROUPS_PATH, recursive=True,).leaves
+            for child in etcd_groups:
+                packed = child.key.split("/")
+                if len(packed) > 4:
+                    (_, _, _, _, group_id, final_key) = packed[0:6]
+                    if final_key == "name":
+                        groups[group_id] = child.value
+        except KeyError:
+            # Means the GROUPS_PATH was not set up.  So, group does not exist.
+            pass
+        return groups
+
+    def get_ep_id_from_cont(self, container_id):
+        """
+        Get a single endpoint ID from a container ID.
+
+        :param container_id: The Docker container ID.
+        :return: Endpoint ID as a string.
+        """
+        ep_path = ENDPOINTS_PATH % {"hostname": hostname,
+                                    "container_id": container_id}
+        try:
+            endpoints = self.etcd_client.read(ep_path).leaves
+        except KeyError:
+            # Re-raise with better message
+            raise KeyError("Container with ID %s was not found." % container_id)
+
+        # Get the first endpoint & ID
+        endpoint = endpoints.next()
+        (_, _, _, _, _, _, _, _, endpoint_id) = endpoint.key.split("/", 8)
+        return endpoint_id
+

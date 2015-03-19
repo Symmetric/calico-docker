@@ -131,8 +131,7 @@ class AdapterResource(resource.Resource):
             env_list = cont["Config"]["Env"]
             env_dict = env_to_dictionary(env_list)
             ip_str = env_dict[ENV_IP]
-            # TODO: process groups
-            group = env_dict.get(ENV_GROUP, None)
+
         except KeyError as e:
             _log.warning("Key error %s, request: %s", e, client_request)
             return
@@ -149,6 +148,11 @@ class AdapterResource(resource.Resource):
                                    container_id=cid,
                                    endpoint=endpoint)
         _log.info("Finished network for container %s, IP=%s", cid, ip)
+
+        # TODO: process groups
+        group = env_dict.get(ENV_GROUP, None)
+        if group:
+            self.etcd.add_container_to_group(cid, group)
 
         return
 
