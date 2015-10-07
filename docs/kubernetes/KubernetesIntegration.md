@@ -30,7 +30,6 @@ This guide will describe the configuration required to use the Calico network pl
    ```
    sudo ETCD_AUTHORITY=<ETCD_IP>:<ETCD_PORT> calicoctl node --ip=<NODE_IP> --kubernetes
    ```
-   >_Note in this example, we set the ETCD_AUTHORITY environment config for the duration of the command_
 
 * #####Manual Install
 
@@ -40,4 +39,4 @@ This guide will describe the configuration required to use the Calico network pl
    On each of your nodes, you will need to configure the Kubelet to use the Calico Networking Plugin. This can be done by including the `--network_plugin=calico` option when starting the Kubelet. If you are using systemd to manage your services, you can add this line to the Kubelet config file (`/etc/systemd/` by default) and restart your Kubelets to begin using Calico.
 
 ### Configuring Policy
-   See our doc on [Programming Kubernetes Policy](KubernetesPolicy.md) to start enforcing security policy on Kubernetes pods!
+   See our doc on [Programming Kubernetes Policy](KubernetesPolicy.md) to start enforcing security policy on Kubernetes pods.
