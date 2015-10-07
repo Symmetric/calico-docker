@@ -5,7 +5,8 @@ This guide will walk you through how to use Calico Networking with an existing A
 * A working Kubernetes Deployment on AWS
     - While any AWS deployment will do, we recommend the Kubernetes [`kube-up` guide](https://github.com/kubernetes/kubernetes/blob/release-1.0/docs/getting-started-guides/aws.md) for AWS. This guide was created with the `kube-up` script in mind.
 * SSH access to your master and minions
-    - Unless otherwise specified, the `kube-up` script will create a private key in the `~/.ssh` folder which you can use to access your AWS Instances.
+    - Unless otherwise specified, the `kube-up` script will create a `kube_aws_rsa` private key in the `~/.ssh` folder which you can use to access your AWS Instances.
+    - SSH in with the following command `ssh -i </path/to/key> ubuntu@<PUBLIC_IP>`
 
 ## Preparing your master services
 ### Setting up Calico's etcd backend
@@ -34,6 +35,7 @@ sudo ETCD_AUTHORITY=<MASTER_PRIVATE_IPV4>:6666 calicoctl node --kubernetes
 
 If you plan on using ipip features, set up a pool with ipip enabled
 > Note: You only need to call `pool add` once per cluster.
+
 ```
 sudo modprobe ipip
 sudo calicoctl pool add 192.168.0.0/16 --ipip
@@ -48,7 +50,7 @@ KUBE_API_ROOT=http://<MASTER_PRIVATE_IPV4>:8080/api/v1/
 CALICO_IPAM=true
 ```
 
-In your kubelet service config files, append the `--network_plugin=calico` flag to the `ExecStart` command and add the following line
+In your kubelet service config files, append the `--network_plugin=calico` flag to the `ExecStart` command and add the following line.
 ```
 EnvironmentFile=/path/to/network-environment
 ```
@@ -62,4 +64,5 @@ sudo systemctl restart kubelet
 Now you are ready to begin using Calico Networking!
 
 For more information on configuring Calico for Kubernetes, see our [Kubernetes Integration docs](KubernetesIntegration.md).
-For more information on programming Calico Policy in Kubernetes, see our [Kubernetes Policy docs](KubernetesPolicy.md)
+
+For more information on programming Calico Policy in Kubernetes, see our [Kubernetes Policy docs](KubernetesPolicy.md).
