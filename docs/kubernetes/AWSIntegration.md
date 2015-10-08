@@ -20,19 +20,26 @@ For now, our plugin does not support token authentication for API access. While 
 ## Running `calico-node`
 On each of your AWS Instances, perform the following steps.
 
-### Install calicoctl
-Download and install the `calicoctl` binary
+### Install calicoctl and calico_kubernetes
+* Download and install the `calicoctl` binary
 ```
 wget https://github.com/projectcalico/calico-docker/releases/download/v0.7.0/calicoctl
 chmod +x calicoctl
 sudo mv calicoctl /usr/bin/
 ```
 
-Running `calicoctl node` will pull the `calico-node` Docker Image and the `calico-kubernetes` plugin binary.
+* Download and install the plugin binary
 ```
-sudo ETCD_AUTHORITY=<MASTER_PRIVATE_IPV4>:6666 calicoctl node --kubernetes
+wget https://github.com/projectcalico/calico-kubernetes/releases/download/v0.2.1/calico_kubernetes
+chmod +x calico_kubernetes
+sudo mkdir -p /usr/libexec/kubernetes/kubelet-plugins/net/exec/calico/
+sudo mv calico_kubernetes /usr/libexec/kubernetes/kubelet-plugins/net/exec/calico/calico
 ```
 
+* Run Calico Node
+```
+sudo ETCD_AUTHORITY=<MASTER_PRIVATE_IPV4>:6666 calicoctl node
+```
 If you plan on using ipip features, set up a pool with ipip enabled
 > Note: You only need to call `pool add` once per cluster.
 
